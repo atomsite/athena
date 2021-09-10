@@ -1,0 +1,120 @@
+#Cartesian CWB problem
+#Note: To run using MPI, the MeshBlock size must be defined!
+#Note: The user needs to set dfloor, pfloor and sfloor to sensible values.
+#      In particular, dfloor should be set only about 5dex lower than the lowest expected density.
+#      If it is set lower than this the hydro code can produce NaNs in the fluid values.
+# Eta Car run with orbit - IA = Instantaneous Acceleration (of wind)
+
+<comment>
+problem   = CWB
+reference = JWE
+configure = --prob=cwb
+
+<job>
+problem_id = wr140 # problem ID: basename of output filenames
+
+# Output history file 10000 times per orbit 
+<output1>
+file_type = hst          # History data dump
+dt        = 2.478816e+04 # time increment between outputs (s)
+
+# Output 3D HDF5 file 100 times per orbit
+<output2>
+file_type = hdf5         # HDF5 data dump
+variable  = prim         # variables to be output
+id        = prim         # identifier in filename
+dt        = 2.478816e+06 # time increment between outputs
+
+# Output 2D slice HDF5 file 10000 times per orbit
+<output3>
+file_type = hdf5         # HDF5 data dump
+variable  = prim         # variables to be output
+id        = 2dxy         # identifier in filename
+x3_slice  = 0.0          # 2D slice at z = 0.0 (the orbital plane)
+dt        = 2.478816e+04 # time increment between outputs 2e5
+
+# Output checkpoint file 100 times per orbit
+<output4>
+file_type  = rst          # restart file
+dt         = 2.478816e+06 # time increment between outputs
+
+<time>
+cfl_number = 0.12         # The Courant, Friedrichs, & Lewy (CFL) Number
+nlim       = -1           # cycle limit
+tlim       = 2.478816e+08 # time limit 2e9
+integrator  = rk3         # time integration algorithm
+xorder      = 2           # order of spatial reconstruction
+ncycle_out  = 10          # interval for stdout summary info
+
+<mesh>
+# X extent
+nx1        = 40         # Number of zones in X1-direction
+x1min      = -1.0e15    # minimum value of X1 - replace e13 with e18
+x1max      = +1.0e15    # maximum value of X1
+ix1_bc     = outflow    # inner-X1 boundary flag
+ox1_bc     = outflow    # outer-X1 boundary flag
+# Y extent 
+nx2        = 40         # Number of zones in X2-direction
+x2min      = -1.0e15    # minimum value of X2
+x2max      = +1.0e15    # maximum value of X2
+ix2_bc     = outflow    # inner-X2 boundary flag
+ox2_bc     = outflow    # outer-X2 boundary flag
+# Z extent 
+nx3        = 40         # Number of zones in X3-direction
+x3min      = -1.0e15    # minimum value of X3
+x3max      = +1.0e15    # maximum value of X3
+ix3_bc     = outflow    # inner-X3 boundary flag
+ox3_bc     = outflow    # outer-X3 boundary flag
+# Mesh refinment settings
+refinement = adaptive   # this must be in <mesh> section!
+numlevel   = 20         # this is actually limited by RefinementCondition() - set to high val
+derefine_count = 9999999999
+
+<meshblock>
+#Testing has shown that 10^3 is the fastest size
+nx1 = 10
+nx2 = 10
+nx3 = 10
+
+<hydro>
+gamma  = 1.66667 # gamma = C_p/C_v
+dfloor = 1.0e-25 # required otherwise Athena++ uses a default value (do not set below this)
+pfloor = 1.0e-20 # required otherwise Athena++ uses a default value (do not set below this)
+sfloor = 0.0     # Scalar floor
+
+<problem>
+# Simulation features
+cooling      = true  # cooling enabled "true" or "false"
+dust         = true  # dust enabled "on" or "off"
+dust_cooling = true  # dust cooling enabled "true" or "false"
+# Cooling curve
+ccurve = coolcurve.dat
+# Star properties
+mdot1  = 5.7e-5 # Mass-loss rate of star 1 (Msol/yr)
+mdot2  = 1.6e-6 # Mass-loss rate of star 2 (Msol/yr)
+vinf1  = 2.86e8 # Terminal wind speed of star 1 (cm/s)
+vinf2  = 3.20e8 # Terminal wind speed of star 2 (cm/s)
+mstar1 = 14.9   # Mass of star 1 (Msol)
+mstar2 = 35.9   # Mass of star 2 (Msol)
+# Wind abundances 
+# WR Star
+xH1  = 0.000 # WR Hydrogen mass fraction
+xHe1 = 0.546 # WR Helium mass fraction
+xC1  = 0.400 # WR Carbon mass fraction
+xN1  = 0.000 # WR Nitrogen mass fraction
+xO1  = 0.050 # WR Oxygen mass fraction
+# OB Star
+xH2  = 0.705 # OB Hydrogen mass fraction
+xHe2 = 0.275 # OB Helium mass fraction
+xC2  = 0.003 # OB Carbon mass fraction
+xN2  = 0.001 # OB Nitrogen mass fraction
+xO2  = 0.010 # OB Oxygen mass fraction
+# Dust properties
+z_init = 1e-6 # Initial dust-to-gas mass fraction
+a_init = 1e-2 # Initial grain radius (micron)
+# Orbital properties
+ecc      = 0.896        # orbit eccentricity
+period   = 2.478816e+08 # orbit period (s)
+phaseoff = 0.0          # orbit phase offset (from periastron)
+
+
