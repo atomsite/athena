@@ -151,6 +151,16 @@ class DustCooling {
     // Dustcooling functions can be stored here
 };
 
+class AMR {
+  public:
+    bool enabled                 = false;
+    int  min_cells_between_stars = 100;
+    int  G0_level                = 0;
+    Real G0dx;
+    Real finest_dx;
+    int max_refine_level;
+    int max_level_to_refine;
+};
 
 // Global variables
 // Stars
@@ -160,13 +170,14 @@ Real ecc;      // Orbit eccentricity
 Real phaseoff; // Phase offset
 // Make wind collision region object
 WindCollisionRegion wcr;
-// Simulation features
-bool adaptive     = false; // Does simulation utilise AMR?
 // Dust properties
 DustDefaults dust; // Initial dust properties
 // Cooling objects
 Cooling cooling;
 DustCooling dust_cooling;
+// Refinement
+AMR amr;
+
 
 //========================================================================================
 //! \fn void MeshBlock::ProblemGenerator(ParameterInput *pin)
@@ -245,9 +256,27 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   star[OB].calcAvgMass();
   // Calculate orbit for the first time
   orbitCalc(time);
-  // If simulation uses an adaptive mesh refinement code, 
+
+  // If simulation uses an adaptive mesh refinement code, configure AMR
   if (adaptive) {
+    // Enroll AMR condition
     EnrollUserRefinementCondition(RefinementCondition);
+    // Active AMR object
+    amr.enabled = true;
+    // Determine resolution details
+    // No mesh blocks exist, but we can extrapolate from athinput
+    int blocksize_nx1 = pin->GetInteger("meshblock", "nx1");
+    int blocksize_nx2 = pin->GetInteger("meshblock", "nx2");
+    int blocksize_nx3 = pin->GetInteger("meshblock", "nx3");
+    int nxBlocks = mesh_size.nx1/blocksize_nx1;
+    int nyBlocks = mesh_size.nx2/blocksize_nx2;
+    int nzBlocks = mesh_size.nx3/blocksize_nx3;
+    int maxBlocks = std::max(nxBlocks,std::max(nyBlocks,nzBlocks));
+    // Calculate min level and G0dx
+    amr.G0_level = log2(maxBlocks);
+    if (pow(2.0,amr.G0_level) < maxBlocks) amr.G0_level++;
+    Real x1size = mesh_size.x1max - mesh_size.x1min;
+    amr.G0dx = x1size / mesh_size.nx1;
   }
 
   // Setup complete, print out variables
@@ -255,9 +284,10 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     printf("!!! Setup complete!\n");
 
     printf("> Features\n");
-    printf(">  Cooling:      %s\n", cooling.enabled ? "True" : "False");
-    printf(">  Dust:         %s\n", dust.enabled ? "True" : "False");
-    printf(">  Dust cooling: %s\n", dust_cooling.enabled ? "True" : "False");
+    printf(">  Cooling:      %s\n", cooling.enabled ? "Enabled" : "Disabled");
+    printf(">  Dust:         %s\n", dust.enabled ? "Enabled" : "Disabled");
+    printf(">  Dust cooling: %s\n", dust_cooling.enabled ? "Enabled" : "Disabled");
+    printf(">  AMR:          %s\n", amr.enabled ? "Enabled" : "Disabled");
 
     printf("> Star properties\n");
     printf(">  Star masses:  %.3e %.3e g\n",star[WR].mass,star[OB].mass);
@@ -293,6 +323,12 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     if (cooling.enabled) {
       printf("> Cooling properties\n");
       std::cout << ">  Filename: " << cooling.curve_file_name << "\n";
+    }
+
+    if (amr.enabled) {
+      printf("> AMR Properties\n");
+      printf(">  G0_level: %d \n",amr.G0_level);
+      printf(">  G0dx:     %.3e cm\n",amr.G0dx);
     }
   
     printf("!!! Starting procesing now!\n");
@@ -409,5 +445,18 @@ void orbitCalc(Real t) {
   star[OB].vel[1] = -v2 * sin_ang;
   // Update separation distance
   wcr.updatePositions(star);
+
+  // Update AMR information
+  if (amr.enabled) {
+    Real desired_resolution = wcr.d_sep / Real(amr.min_cells_between_stars);
+    amr.max_level_to_refine = log2(amr.G0dx/desired_resolution);
+    if (amr.G0dx/pow(2.0,amr.max_level_to_refine) > desired_resolution) {
+      amr.max_level_to_refine++;
+    }
+    amr.max_level_to_refine += amr.G0_level;
+    amr.finest_dx = amr.G0dx;
+  }
+
+  // Finished!
   return;
 }
