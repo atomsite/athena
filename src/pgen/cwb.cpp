@@ -55,6 +55,7 @@
 
 // Functions
 int RefinementCondition(MeshBlock *pmb);
+void orbitCalc(Real t);
 
 // Classes
 class Star {
@@ -62,7 +63,9 @@ class Star {
     Real mass; // Star mas (g) 
     Real mdot; // Mass loss rate (g/s)
     Real vinf; // Wind terminal velocity (cm/s)
-    Real pos[3] = {0.0,0.0,0.0}; // X Y and Z coordinates for star (Cartesian, cm)
+    Real mom;  // Wind momentum (g cm / s^2)
+    Real pos[3] = {0.0,0.0,0.0}; // X Y and Z coordinates for star (Cartesian, cm/s)
+    Real vel[3] = {0.0,0.0,0.0}; // X Y and Z velocity components of star motion
     // Wind abundances, stored in an array with followind indexes
     // 0: Hydrogen
     // 1: Helium
@@ -90,6 +93,9 @@ class Star {
       avg_mass = avgm;
       mu       = avgm/MASSH;
     }
+    void calcWindMomentum(void) {
+      mom = mdot * vinf;
+    }
 };
 
 class DustDefaults {
@@ -99,6 +105,37 @@ class DustDefaults {
     const Real a_min  = 1e-6; // Minimum grain radius (micron)
     Real z_init = z_min; // Initial d2g mass ratio, defined in problem file
     Real a_init = a_min; // Initial grain radius, defined in problem file
+};
+
+class WindCollisionRegion {
+  public:
+    Real d_sep; // Separation distance (cm)
+    Real frac_rwr; 
+    Real frac_rob;
+    Real r_wr;  // Distance from stagnation point to WR star (cm)
+    Real r_ob;  // Distance from stagnation point to OB star (cm)
+    Real eta;   // Wind momentum ratio
+    Real pos[3]  = {0.0,0.0,0.0}; // Stagnation point cartesian position (cm)
+    Real dist[3] = {0.0,0.0,0.0}; // Star separation components (cm)
+    // Functions
+    void updatePositions(Star star[]) {
+      // Calculate components of separation and stagnation point position
+      Real sep2 = 0.0;
+      for (int i = 0; i < 3; i++) {
+        dist[i] = star[WR].pos[i] - star[OB].pos[i];
+        pos[i]  = star[OB].pos[i] - frac_rob*(star[OB].pos[i] - star[WR].pos[i]);
+        // Summate dist for each dimension to find dsep^2
+        sep2 += SQR(dist[i]); 
+      }
+      // Update dsep and distances
+      d_sep = sqrt(sep2);
+      r_ob  = frac_rob * d_sep;
+      r_wr  = frac_rwr * d_sep;
+    }
+    void calcFracs(void) {
+      frac_rob = 1.0 - 1.0/(1.0 + sqrt(eta));
+      frac_rwr = 1.0 - sqrt(eta)/(1.0 + sqrt(eta));
+    }
 };
 
 class Cooling {
@@ -114,13 +151,15 @@ class DustCooling {
     // Dustcooling functions can be stored here
 };
 
+
 // Global variables
 // Stars
 Star star[2];  // Two stars, WR for index 0 and OB for index 1
-Real eta;      // Wind momentum ratio 
 Real period;   // Orbital period (s)
 Real ecc;      // Orbit eccentricity
-Real phaseoff; // Phase offset 
+Real phaseoff; // Phase offset
+// Make wind collision region object
+WindCollisionRegion wcr;
 // Simulation features
 bool adaptive     = false; // Does simulation utilise AMR?
 // Dust properties
@@ -194,14 +233,18 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   // Convert mass loss rate to CGS
   star[WR].mdot *= MSOLYRTOGS;
   star[OB].mdot *= MSOLYRTOGS;
-  // Calculate eta
-  eta = (star[OB].mdot * star[OB].vinf) / (star[WR].mdot * star[WR].vinf);
+  // Calculate momenta
+  star[WR].calcWindMomentum();
+  star[OB].calcWindMomentum();
+  // Calculate wind momentum ratio
+  wcr.eta = star[OB].mom / star[WR].mom;
+  // Update frac_rob and frac_rwr
+  wcr.calcFracs();
   // Calculate mass fractions for both stars using builtin class function
   star[WR].calcAvgMass();
   star[OB].calcAvgMass();
   // Calculate orbit for the first time
-  // calcOrbit();
-
+  orbitCalc(time);
   // If simulation uses an adaptive mesh refinement code, 
   if (adaptive) {
     EnrollUserRefinementCondition(RefinementCondition);
@@ -225,9 +268,12 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     printf(">  Period:   %.3e \n",period);
     printf(">  Phaseoff: %.3f \n",phaseoff);
     printf(">  Ecc:      %.3f \n",ecc);
-    printf(">  X:        %.3e %.3e cm\n",star[WR].pos[0],star[OB].pos[0]);
-    printf(">  Y:        %.3e %.3e cm\n",star[WR].pos[1],star[OB].pos[1]);
-    printf(">  Z:        %.3e %.3e cm\n",star[WR].pos[2],star[OB].pos[2]);
+    printf(">  X:        %+.3e %+.3e cm\n",star[WR].pos[0],star[OB].pos[0]);
+    printf(">  Y:        %+.3e %+.3e cm\n",star[WR].pos[1],star[OB].pos[1]);
+    printf(">  Z:        %+.3e %+.3e cm\n",star[WR].pos[2],star[OB].pos[2]);
+    printf(">  d_sep:    %.3e cm\n",wcr.d_sep);
+    printf(">  r_wcr:    %+.3e %+.3e cm\n",wcr.r_wr,wcr.r_ob);
+    printf(">  stag_pos: %+.3e %+.3e %+.3e cm\n",wcr.pos[0],wcr.pos[1],wcr.pos[2]);
     
     printf("> Abundances\n");
     printf(">  xH:   %.3f %.3f\n",star[WR].mass_frac[0],star[OB].mass_frac[0]);
@@ -236,7 +282,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     printf(">  xN:   %.3f %.3f\n",star[WR].mass_frac[3],star[OB].mass_frac[3]);
     printf(">  xO:   %.3f %.3f\n",star[WR].mass_frac[4],star[OB].mass_frac[4]);
     printf(">  Mu:   %.3f %.3f\n",star[WR].mu,star[OB].mu);
-    printf(">  AvgM: %.3e %.3e\n",star[WR].avg_mass,star[OB].avg_mass);
+    printf(">  AvgM: %.3e %.3e g\n",star[WR].avg_mass,star[OB].avg_mass);
 
     if (dust.enabled) {
       printf("> Dust properties\n");
@@ -280,4 +326,88 @@ void MeshBlock::UserWorkInLoop() {
 //========================================================================================
 int RefinementCondition(MeshBlock *pmb) {
   
+}
+
+// All functions not related to Mesh:: or MeshBlock:: class below this line
+// =======================================================================================
+
+// Calculate the position and velocities of the stars based on the model time.
+void orbitCalc(Real t) {
+  // Calculate orbital offset due to time
+  Real time_offset = phaseoff * period;  // Adjusted orbital offset
+  Real t_orbit     = t + time_offset;    // Time in orbit (s)
+  Real phase       = t_orbit / period;   // Orbital phase (fraction)
+  // Calculate other orbital properties
+  Real phi = 2.0 * PI * phase;
+  // Make first guess at eccentric anomaly
+  Real E = phi;
+  // 
+  Real cos_E = std::cos(E);
+  Real sin_E = std::sin(E);
+  // Use Newton-Raphson solver to calculate E
+  Real dE = (phi -E + ecc*sin_E) / (1.0 - ecc*cos_E);
+  // Loop to minimise dE
+  while (std::abs(dE) > 1e-10) {
+    E = E + dE;
+    cos_E = std::cos(E);
+    sin_E = std::sin(E);
+    dE = (phi - E + ecc*sin_E)/(1.0 - ecc*cos_E);
+  }
+
+  Real sii   = (std::sqrt(1.0 - ecc*ecc))*sin_E/(1.0 - ecc*cos_E);
+  Real coi   = (cos_E - ecc)/(1.0 - ecc*cos_E);
+  Real theta = std::atan2(sii,coi);
+  
+  if (theta < 0.0) {
+    theta = 2.0*PI + theta;
+  }
+
+  // Calculate radius vector
+  Real rrel = 1.0 - ecc*cos_E;
+  // Compute barycentric orbital positions and velocities for both stars
+  Real m1 = star[WR].mass;
+  Real m2 = star[OB].mass;
+  // Calculate reduced mass for star 1
+  Real RM1 = CUBE(m2) / SQR(m1+m2);
+  // Calculate orbital components for star 1
+  Real a1 = pow((G*RM1*SQR(period)/(4*SQR(PI))),ONE_3RD);
+  Real v1 = sqrt(G*RM1*(2.0/rrel/a1 - 1.0/a1));
+  // Calculate reduced mass for star 2
+  Real RM2 = CUBE(m1) / SQR(m1+m2);
+  // Calculate orbital components for star 2
+  Real a2 = pow((G*RM2*SQR(period)/(4*SQR(PI))),ONE_3RD);
+  Real v2 = sqrt(G*RM2*(2.0/rrel/a2 - 1.0/a2));
+
+  // Compute angle between velocity and radius vectors
+  Real gamma_ang = PI/2.0 + std::acos(std::sqrt((1.0 - SQR(ecc))/(rrel*(2.0 - rrel))));
+  Real ang;
+  if (theta <= PI) {
+    ang = PI - gamma_ang + theta;
+  }
+  else {
+    ang = theta + gamma_ang;
+  }
+
+  // Update positions
+  Real sin_theta = std::sin(theta);
+  Real cos_theta = std::cos(theta);
+  Real sin_ang   = std::sin(ang);
+  Real cos_ang   = std::cos(ang);
+  // Since orbit is clockwise on XY plane, SMA along x axis, there is no z orbital component, hence Z component of pos and vel will be 0.0 unless something has gone horribly wrong
+  // Star 1
+  star[WR].pos[0] = -a1 * rrel * cos_theta;
+  star[WR].pos[1] = +a1 * rrel * sin_theta;
+  // Star 2
+  star[OB].pos[0] = +a2 * rrel * cos_theta;
+  star[OB].pos[1] = -a2 * rrel * sin_theta;
+  // Update velocities
+  // Star 1
+  star[WR].vel[0] = -v1 * cos_ang;
+  star[WR].vel[1] = +v1 * sin_ang;
+  // Star 2
+  star[OB].vel[0] = +v2 * cos_ang;
+  star[OB].vel[1] = -v2 * sin_ang;
+  // Update separation distance
+  wcr.updatePositions(star);
+  return;
 }
