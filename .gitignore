@@ -3,7 +3,8 @@ Makefile
 src/defs.hpp
 
 # Hidden folders and files
-.*
+.github
+.vscode
 
 # Object and binary directories
 obj/
