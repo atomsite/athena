@@ -1,0 +1,74 @@
+pgen:    pgen
+prefix:  2dxy
+cmap:    inferno
+xyunits: au
+#xmin:    -7.4798935e+13
+#xmax:    +7.4798935e+13
+#ymin:    -7.4798935e+13
+#ymax:    +7.4798935e+13
+# Image output variables
+title: WR 140
+subtitle: No dust
+showtime:       true # Show current simulation time or not
+tunits:         yr   # Units to display time if showtime is true
+extension:      png  # Extension of output plot, png recommended
+dpi:            300  # DPI of plot, if using a raster file
+contourlevels:  512  # Number of contour levels, default = 64
+plotheight:     5    # Plot height in inches 
+plotwidth:      6    # Plot width in inches
+writetofolders: true # Create individual folders and write to them
+
+# Quantities to plot, each one is individually controllable
+plots:
+  - quantity: rho
+    filename: density
+    label:    $\rho_G$ $(g/cm^3)$
+    log:      true
+    zmin:     -20
+    zmax:     -12
+    contour:  false
+  - quantity: press
+    filename: pressure
+    label:    $P_G$ $(dyn/cm^2)$
+    log:      true
+    zmin:     -10
+    zmax:     0
+    contour:  false
+  - quantity: r1
+    filename: z
+    label:    Dust/Gas mass ratio 
+    log:      true
+    zmin:     -7
+    zmax:     2
+    contour:  false
+  - quantity: r0
+    filename: col
+    label:    Wind Colour
+    log:      true
+    zmax:     3
+    zmin:     -3
+#    zmin:     -10
+#    zmax:     0
+  - quantity: r2
+    filename: a
+    label:    Grain radius ($\mu$ m)
+    log:      true
+    contour:  false
+    zmin:     -8
+    zmax:     0
+  - quantity: temp
+    filename: temp
+    label:    Temperature (K)
+    log:      true
+    zmin:     3
+    zmax:     9
+    contour:  false
+#  - quantity: ke
+#    label:    $E_k/\rho$ $(erg/cm^3)$
+#    log:      true
+#    contour:  false
+  # - quantity: rhod
+  #   filename: dustdensity
+  #   label:    $\rho_D$ $(g/cm^3)$
+  #   log:      true
+  #   contour:  false
