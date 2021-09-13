@@ -2,6 +2,9 @@
 Makefile
 src/defs.hpp
 
+# Hidden folders and files
+.*
+
 # Object and binary directories
 obj/
 bin/
