@@ -31,7 +31,7 @@ file_type = hdf5         # HDF5 data dump
 variable  = prim         # variables to be output
 id        = 2dxy         # identifier in filename
 x3_slice  = 0.0          # 2D slice at z = 0.0 (the orbital plane)
-dt        = 2.478816e+04 # time increment between outputs 2e5
+dt        = 2.478816e+03 # time increment between outputs 2e5
 
 # Output checkpoint file 100 times per orbit
 <output4>
@@ -42,8 +42,8 @@ dt         = 2.478816e+06 # time increment between outputs
 cfl_number = 0.12         # The Courant, Friedrichs, & Lewy (CFL) Number
 nlim       = -1           # cycle limit
 tlim       = 2.478816e+08 # time limit 2e9
-integrator  = rk3         # time integration algorithm
-xorder      = 2           # order of spatial reconstruction
+integrator  = vl2         # time integration algorithm
+xorder      = 1           # order of spatial reconstruction
 ncycle_out  = 10          # interval for stdout summary info
 
 <mesh>
@@ -67,7 +67,7 @@ ix3_bc     = outflow    # inner-X3 boundary flag
 ox3_bc     = outflow    # outer-X3 boundary flag
 # Mesh refinment settings
 refinement = adaptive   # this must be in <mesh> section!
-numlevel   = 20         # this is actually limited by RefinementCondition() - set to high val
+numlevel   = 10         # this is actually limited by RefinementCondition() - set to high val
 derefine_count = 9999999999
 
 <meshblock>

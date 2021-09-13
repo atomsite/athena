@@ -67,9 +67,9 @@ class Star {
     Real mdot; // Mass loss rate (g/s)
     Real vinf; // Wind terminal velocity (cm/s)
     Real mom;  // Wind momentum (g cm / s^2)
-    Real Twind = 1e4; // Wind temperature (K)
-    Real pos[3] = {0.0,0.0,0.0}; // X Y and Z coordinates for star (Cartesian, cm/s)
-    Real vel[3] = {0.0,0.0,0.0}; // X Y and Z velocity components of star motion
+    Real Twind  = 1e4;            // Wind temperature (K)
+    Real pos[3] = {0.0,0.0,0.0};  // X Y and Z coordinates for star (Cartesian, cm/s)
+    Real vel[3] = {0.0,0.0,0.0};  // X Y and Z velocity components of star motion
     Real col = 0.0; // Wind colour, 1 for primary star 0 for secondary
     // Wind abundances, stored in an array with followind indexes
     // 0: Hydrogen
@@ -82,7 +82,7 @@ class Star {
     Real mass_frac[5] = {1.0,0.0,0.0,0.0,0.0}; // 
     Real avg_mass     = MASSH; // Average particle mass (g)
     Real mu           = 1.0;   // Mean molecular mass
-    int  ncells_remap = 6;     // Number of cells width for remap radius
+    int  ncells_remap = 10;     // Number of cells width for remap radius
     // Functions
     // Calculate average mass, 
     void calcAvgMass(void) {
@@ -159,7 +159,7 @@ class DustCooling {
 class AMR {
   public:
     bool enabled                 = false;
-    int  min_cells_between_stars = 100;
+    int  min_cells_between_stars = 150;
     int  G0_level                = 0;
     Real G0dx;
     Real finest_dx;
@@ -415,7 +415,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
           Real cos_phi   = zc/r;
           Real sin_theta = yc/xy;
           Real cos_theta = xc/xy;
-          // Determine if cell is on the right side
+          // Determine if cell is on the same side of the WCR as the star being tested
           Real xx = pcoord->x1v(i);
           Real wcr_star_x = star[n].pos[0] - wcr.pos[0];  
           Real wcr_cell_x = xx - wcr.pos[0];
@@ -437,15 +437,15 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
             // Calculate pressure
             Real pre = (rho/star[n].avg_mass) * KBOLTZ * star[n].Twind;
             // Calculate total energy in cell
-            Real ie = pre / gmma1;
-            Real ke = 0.5 * rho * (SQR(u1) + SQR(u2) + SQR(u3));
-            Real etot = ie + ke;
+            Real e_int = pre / gmma1;
+            Real e_kin = 0.5 * rho * (SQR(u1) + SQR(u2) + SQR(u3));
+            Real e_tot = e_int + e_kin;
             // Rewrite cell conserved variables
             phydro->u(IDN,k,j,i) = rho;
             phydro->u(IM1,k,j,i) = m1;
             phydro->u(IM2,k,j,i) = m2;
             phydro->u(IM3,k,j,i) = m3;
-            phydro->u(IEN,k,j,i) = etot;
+            phydro->u(IEN,k,j,i) = e_tot;
             // Rewrite colour scalar
             pscalars->s(CLOC,k,j,i) = star[n].col * rho;
             // Blank all other scalars
@@ -454,23 +454,6 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
             }
           }
         }
-      }
-    }
-  }
-
-  // Second run through block, limit wind colour
-  for (int k=ks; k<=ke; ++k) {
-    for (int j=js; j<=je; ++j) {
-      for (int i=is; i<=ie; ++i) {
-        Real rho = phydro->u(IDN,k,j,i);
-        Real col = pscalars->s(CLOC,k,j,i);
-        if (col > rho) {
-          col = rho;
-        }
-        if (col < 0.0) {
-          col = 0.0;
-        }
-        pscalars->s(CLOC,k,j,i) = col;
       }
     }
   }
@@ -511,7 +494,6 @@ void MeshBlock::UserWorkInLoop() {
   // Get timestep, all meshblocks operate synchronously
   Real dt = pmy_mesh->dt;
   
-
   // Begin remapping winds
   for (int n = 0; n < NWIND; n++) {
     Real dx = pcoord->dx1v(0); // Cell width for this meshblock
@@ -558,15 +540,15 @@ void MeshBlock::UserWorkInLoop() {
             // Calculate pressure
             Real pre = (rho/star[n].avg_mass) * KBOLTZ * star[n].Twind;
             // Calculate total energy in cell
-            Real ie   = pre / gmma1;
-            Real ke   = 0.5 * rho * (SQR(u1) + SQR(u2) + SQR(u3));
-            Real etot = ie + ke;
+            Real e_int = pre / gmma1;
+            Real e_kin = 0.5 * rho * (SQR(u1) + SQR(u2) + SQR(u3));
+            Real e_tot = e_int + e_kin;
             // Rewrite cell conserved variables
             phydro->u(IDN,k,j,i) = rho;
             phydro->u(IM1,k,j,i) = m1;
             phydro->u(IM2,k,j,i) = m2;
             phydro->u(IM3,k,j,i) = m3;
-            phydro->u(IEN,k,j,i) = etot;
+            phydro->u(IEN,k,j,i) = e_tot;
             // Rewrite passive scalars
             Real c_density = star[n].col * rho;
             pscalars->s(CLOC,k,j,i) = c_density;
@@ -581,6 +563,27 @@ void MeshBlock::UserWorkInLoop() {
       }
     }
   }
+
+  // Second run through MeshBlock, limit wind colour
+  for (int k=ks; k<=ke; ++k) {
+    for (int j=js; j<=je; ++j) {
+      for (int i=is; i<=ie; ++i) {
+        Real rho = phydro->u(IDN,k,j,i);
+        Real col = pscalars->s(CLOC,k,j,i);
+        if (col > rho) {
+          col = rho;
+        }
+        if (col < 0.0) {
+          col = 0.0;
+        }
+        pscalars->s(CLOC,k,j,i) = col;
+        pscalars->s(3,k,j,i) = loc.level * rho;
+      }
+    }
+  }
+
+  // Finished!
+  return;
 }
 
 //========================================================================================
