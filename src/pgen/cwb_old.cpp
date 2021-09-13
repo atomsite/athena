@@ -291,7 +291,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   if (force) ReadInCAKdataFiles();
 
   // Note: it is only possible to have one source function enrolled by the user.
-  EnrollUserExplicitSourceFunction(PhysicalSources);
+  // EnrollUserExplicitSourceFunction(PhysicalSources);
 
   if (adaptive==true)
       EnrollUserRefinementCondition(RefinementCondition);  

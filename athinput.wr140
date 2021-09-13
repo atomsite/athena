@@ -115,6 +115,6 @@ a_init = 1e-2 # Initial grain radius (micron)
 # Orbital properties
 ecc      = 0.896        # orbit eccentricity
 period   = 2.478816e+08 # orbit period (s)
-phaseoff = 0.0          # orbit phase offset (from periastron)
+phaseoff = 0.5          # orbit phase offset (from periastron)
 
 
