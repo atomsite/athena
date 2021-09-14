@@ -88,7 +88,8 @@ cooling      = true  # cooling enabled "true" or "false"
 dust         = true  # dust enabled "on" or "off"
 dust_cooling = true  # dust cooling enabled "true" or "false"
 # Cooling curve
-ccurve = coolcurve.dat
+ccurve1 = coolcurve.dat
+ccurve2 = coolcurve.dat
 # Star properties
 mdot1  = 5.7e-5 # Mass-loss rate of star 1 (Msol/yr)
 mdot2  = 1.6e-6 # Mass-loss rate of star 2 (Msol/yr)

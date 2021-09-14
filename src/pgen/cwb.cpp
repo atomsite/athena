@@ -5,19 +5,20 @@
 //========================================================================================
 //! \file cwb.cpp
 //! \brief Problem generator for 3D Colliding Wind Binary problem with dust advection and
-//!        growth, simulation 
-
+//!        growth, simulation is 3D cartesian only, and simulates Keplerian orbits
+//!        
 
 // C headers
 
 // C++ headers
 #include <algorithm>
 #include <cmath>
-#include <cstdio>     // fopen(), fprintf(), freopen()
+#include <iostream>
 #include <cstring>    // strcmp()
-#include <sstream>
+#include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 // Athena++ headers
 #include "../athena.hpp"
@@ -59,6 +60,7 @@
 // Functions
 int RefinementCondition(MeshBlock *pmb);
 void orbitCalc(Real t);
+Real searchAndInterpolate();
 
 // Classes
 class Star {
@@ -146,21 +148,90 @@ class WindCollisionRegion {
 class Cooling {
   public:
     bool enabled = false;
+};
+
+class CoolCurve {
+  public:
     std::string curve_file_name;
-    // Will be used to store cooling curves
+    // Cooling curves
+    std::vector<Real> logT; // Cooling curve log(T) values (log(K))
+    std::vector<Real> T;    // Cooling curve temperature values (K)
+    std::vector<Real> L;    // Cooling curve lambda values
+    // Other cooling curve parameters
+    Real T_min = 0.0;  // Minimum temperature in cooling curve (K)
+    Real T_max = 1e9;  // Maximum temperature in cooling curve (K)
+    int  n_bins;       // Number of bins in cooling curve
+    // Functions
+    // Function to read in cooling curve
+    void readPlasmaCoolingCurve(void) {
+      // Read in temperature bins
+      std::ifstream cool_curve(curve_file_name);
+      if (!cool_curve) {
+        std::cerr << "Failed to open cooling curve -> " << curve_file_name << "\n";
+        std::cerr << "Exiting...\n";
+        exit(EXIT_FAILURE);
+      }
+      cool_curve.seekg(0);
+      while (!cool_curve.eof()) {
+        Real logT_buf;  // log(T) buffer
+        Real L_buf;     // Lambda buffer
+        cool_curve >> logT_buf >> L_buf;
+        // Add to arrays
+        logT.push_back(logT_buf);
+        L.push_back(L_buf);
+      }
+      // Close file
+      cool_curve.close();
+      // Get number of points in cooling curve
+      if (L.size() != logT.size()) {
+        std::cerr << "!!! Mismatch in cooling curve array sizes!\n";
+        std::cerr << "!!! Exiting...\n";
+        exit(EXIT_FAILURE);
+      }
+      n_bins = logT.size();
+      // Create temperature array
+      for (int n = 0; n < n_bins; n++) {
+        T.push_back(pow(10.0,logT[n]));
+      }
+      // Ensure temperature bins are ascending and monotonic
+      if (!std::is_sorted(T.begin(),T.end())) {
+        std::cerr << "!!! Cooling curve " << curve_file_name << " failed test to see if it is sorted!\n";
+        std::cerr << "!!! Exiting...\n";
+        exit(EXIT_FAILURE);
+      }
+      T_min = T.front();
+      T_max = T.back();
+      return;
+    }
 };
 
 class DustCooling {
   public:
     bool enabled = false;
-    // Dustcooling functions can be stored here
+};
+
+class IonCurve {
+  public:
+    std::string ion_frac_file_name; // String for filename of ion frac
+    // Ionisation fraction curve
+    std::vector<Real> logT;  // Ionisation curve log(T) (log(K))
+    std::vector<Real> T;     // Ionisation curve temperature (K)
+    std::vector<Real> ne;    // Ionisation curve free electrons per ion
+    // Dustcooling functions and such can be stored here
+    Real T_min = 0.0;
+    Real T_max = 0.0;
+    int  n_bins;
+    // Functions
 };
 
 class AMR {
   public:
     bool enabled                 = false;
     int  min_cells_between_stars = 150;
-    int  G0_level                = 0;
+    int  G0_level                = 0;      // Maximum level
+    // Constants
+    const int star_separation = 10; // Number of cells distance to star to refine
+    const int wcr_separation  = 10; // Number of cells distance to WCR to refine
     Real G0dx;
     Real finest_dx;
     int max_refine_level;
@@ -169,7 +240,7 @@ class AMR {
 
 // Global variables
 // Stars
-Star star[2];  // Two stars, WR for index 0 and OB for index 1
+Star star[NWIND];  // Two stars, WR for index 0 and OB for index 1
 Real period;   // Orbital period (s)
 Real ecc;      // Orbit eccentricity
 Real phaseoff; // Phase offset
@@ -179,7 +250,9 @@ WindCollisionRegion wcr;
 DustDefaults dust; // Initial dust properties
 // Cooling objects
 Cooling cooling;
+CoolCurve cool_curve[NWIND];
 DustCooling dust_cooling;
+IonCurve ion_curve[NWIND];
 // Refinement
 AMR amr;
 // Thermodynamics
@@ -227,7 +300,8 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   dust_cooling.enabled = pin->GetBoolean("problem","dust_cooling");
   // Dust properties
   if (cooling.enabled) {
-    cooling.curve_file_name = pin->GetString("problem","ccurve");
+    cool_curve[WR].curve_file_name = pin->GetString("problem","ccurve1");
+    cool_curve[OB].curve_file_name = pin->GetString("problem","ccurve1");
   }
   if (dust.enabled) {
     dust.z_init = pin->GetReal("problem","z_init");
@@ -360,13 +434,8 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
     if (cooling.enabled) {
       printf("> Cooling properties\n");
-      std::cout << ">  Filename: " << cooling.curve_file_name << "\n";
-    }
-
-    if (amr.enabled) {
-      printf("> AMR Properties\n");
-      printf(">  G0_level: %d \n",amr.G0_level);
-      printf(">  G0dx:     %.3e cm\n",amr.G0dx);
+      std::cout << ">  WR Filename: " << cool_curve[WR].curve_file_name << "\n";
+      std::cout << ">  OB Filename: " << cool_curve[OB].curve_file_name << "\n";
     }
   
     printf("!!! Starting procesing now!\n");
@@ -586,140 +655,88 @@ void MeshBlock::UserWorkInLoop() {
   return;
 }
 
+
 //========================================================================================
 //! \fn int RefinementCondition(ParameterInput *pmb)
 //! \brief Refinement conditions for problem, if AMR is enabled, these will be enabled
-//========================================================================================
-// Refinement condition. We can use velocity convergence to find the central parts of the WCR.
-// In 2D RPZ geometry, i(1) is R, j(2) is P and k(3) is Z, and the stars are located along Z (k).
-// Therefore there should be a velocity convergence in Z at the stagnation point.
-int RefinementCondition(MeshBlock *pmb){
+//!  Function returns one of 3 values:
+//!  -1: Flag block for de-refinement, this does not immediately de-refine the cell, but
+//!      refines after a defined number of steps, and if surrounding cells are flagged
+//!      for de-refinement
+//!   0: Do absolutely nothing
+//!   1: Refine cell on next timestep
+//!  How this function works:
+//!    The main method is to refine near individual stars, as well as around the wind
+//!    stagnation point, will refine to maximum simulation level.
+//!    This is based on the number of cells distance, this means that refinement should
+//!    be continuous and smooth outwards from the 3 refinement points
+//!  See https://github.com/PrincetonUniversity/athena/wiki/Adaptive-Mesh-Refinement
+// ========================================================================================
 
-  AthenaArray<Real> &w = pmb->phydro->w;
-  // AthenaArray<Real> &r = pmb->pscalars->r;
-
-  // Mesh contains: root_level, max_level, current_level;
-  // The Mesh starts with a single MeshBlock on level 0. Thus the G0 blocks are on the
-  // G0_level. Determine this level.
-  // NOTE: The following calculation cannot be done in Mesh::InitUserMeshData() because
-  // no MeshBlocks exist at that time.
-
-  // If the current MeshBlock is on a higher level than the current maximum, immediately derefine.
-  // This happens when the separation between the stars is increasing.
-
-  // Hooks into new version, no time to re-write this right now
-  //TODO Fix this all up 
-  // Maximum refinement level for problem
-  int maxLevelToRefineTo = amr.max_level_to_refine;
-  // Star positions
-  Real xpos1 = star[WR].pos[0];
-  Real ypos1 = star[WR].pos[1];
-  Real zpos1 = star[WR].pos[2];
-  Real xpos2 = star[OB].pos[0];
-  Real ypos2 = star[OB].pos[1];
-  Real zpos2 = star[OB].pos[2];
-  // Stagnation point position
-  Real stagx = wcr.pos[0];
-  Real stagy = wcr.pos[1];
-  Real stagz = wcr.pos[2];
-
-  // if (Globals::my_rank == 0) {
-  //   printf("REFINEMENT\n");
-  //   printf("%d\n",maxLevelToRefineTo);
-  //   printf("%.3e %.3e %.3e\n",xpos1,ypos1,zpos1);
-  //   printf("%.3e %.3e %.3e\n",xpos2,ypos2,zpos2);
-  //   printf("%.3e %.3e %.3e\n",stagx,stagy,stagz);
-  // }
-  // exit(EXIT_SUCCESS);
-
-  if (pmb->loc.level > maxLevelToRefineTo) return -1; // derefine
-
-  // Now refine on some user specified criteria such as divV < 0.0 (indicating a shock or parts of the WCR)  
-  for(int k=pmb->ks-1; k<=pmb->ke+1; k++) {
-    Real dz = (pmb->pcoord->x3v(k+1) - pmb->pcoord->x3v(k-1));
-    for(int j=pmb->js-1; j<=pmb->je+1; j++) {
-      Real dy = (pmb->pcoord->x2v(j+1) - pmb->pcoord->x2v(j-1));
-      for(int i=pmb->is-1; i<=pmb->ie+1; i++) {
-        Real dx = (pmb->pcoord->x1v(i+1) - pmb->pcoord->x1v(i-1));
-        // Refine on divergence condition (cartesian)
-        Real dudx = (w(IVX,k,j,i+1)-w(IVX,k,j,i-1))/dx;
-        Real dvdy = (w(IVY,k,j+1,i)-w(IVY,k,j-1,i))/dy;
-        Real dwdz = (w(IVZ,k+1,j,i)-w(IVZ,k-1,j,i))/dz;
-        Real divV = dudx + dvdy + dwdz;
-        
-        //std::cout << "dudx = " << dudx << "; dvdy = " << dvdy << "; dwdz = " << dwdz << "; divV = " << divV << "\n";
-        //exit(EXIT_SUCCESS);
-        if (divV < 0.0){ // potentially refine
-          // Check to see if not too far away from the stagnation point.
-          Real x = pmb->pcoord->x1v(i) - stagx;
-          Real y = pmb->pcoord->x2v(j) - stagy;
-          Real z = pmb->pcoord->x3v(k) - stagz;
-          Real r = std::sqrt(x*x + y*y + z*z);  // distance from stagnation point
+int RefinementCondition(MeshBlock *pmb) {
+  // First, get current cell level width, this assumes that all cells are square (they should be for this problem!)
+  Real dx = pmb->pcoord->dx1v(0);
+  // Check to see if meshblock contains stars, refine around region to max level
+  for (int n = 0; n < NWIND; n++) {
+    for (int k = pmb->ks; k <= pmb->ke; k++) {
+      // Get Z co-ordinate separation from star
+      Real zc  = pmb->pcoord->x3v(k) - star[n].pos[2];
+      Real zc2 = SQR(zc);
+      for (int j = pmb->js; j <= pmb->je; j++) {
+        // Get Y co-ordinate separation from star
+        Real yc  = pmb->pcoord->x2v(j) - star[n].pos[1];
+        Real yc2 = SQR(yc);
+        for (int i = pmb->is; i <= pmb->ie; i++) {
+          // Get X co-ordinate separation from star
+          Real xc  = pmb->pcoord->x1v(i) - star[n].pos[0];
+          Real xc2 = SQR(xc);
+          // Get radial distance from current star to current cell
+          Real r2 = xc2 + yc2 + zc2;
+          Real r  = sqrt(r2);
+          // Get approximate number of cells between current cell and current star
           int ri = int(r/dx);
-          // Based on the number of cells to the stagnation point, either refine, do nothing, or derefine
-          if (ri < 10){
-            if (maxLevelToRefineTo - pmb->loc.level > 0) {
-              return 1; // refine (10)
-            }
-          }
-          else if (ri < 30);     // do nothing // 30
-          else {
-            return -1;	 // derefine 
+          // If number of cells distance is below threshold, refine until maximum level reached
+          if (ri < amr.star_separation) {
+            return 1;
           }
         }
       }
     }
   }
-
-  // Set refinement based on distance to each star
-  Real xpos[2]={xpos1,xpos2};
-  Real ypos[2]={ypos1,ypos2};
-  Real zpos[2]={zpos1,zpos2};
-  bool derefineWind = true;
-  
-  for (int nw = 0; nw < 2; ++nw){ // Loop over each wind
-    for (int k=pmb->ks; k<=pmb->ke; k++) {
-      Real zc = pmb->pcoord->x3v(k) - zpos[nw];
-      Real zc2 = zc*zc;
-      for (int j=pmb->js; j<=pmb->je; j++) {
-        Real yc = pmb->pcoord->x2v(j) - ypos[nw];
-        Real yc2 = yc*yc;
-        for (int i=pmb->is; i<=pmb->ie; i++) {
-          Real dx = (pmb->pcoord->x1v(i+1) - pmb->pcoord->x1v(i-1));
-          Real xc = pmb->pcoord->x1v(i) - xpos[nw];
-	        Real xc2 = xc*xc;
-	        Real r2 = xc2 + yc2 + zc2;
-	        Real r = std::sqrt(r2);
-	        int ri = int(r/dx);
-
-          // Refine, do nothing, or potentially derefine, based on distance from either star
-          if (nw == 0){
-	          // Refine only to maxLevel-2 near star 1
-	          if (maxLevelToRefineTo - pmb->loc.level <= 2){
-	            // Do nothing
-	          }
-	          else if (ri < 10) return 1; // refine (10)
-	        }
-	        else if (maxLevelToRefineTo - pmb->loc.level > 0 && ri < 10) {
-            return 1; // refine (10) for wind 2
-          }
-	  
-	        if (ri < 20) {
-            derefineWind = false; // 20
-          }
-	      }
+  // Check to see if meshblock contains the stagnation point
+  for (int k = pmb->ks; k <= pmb->ke; k++) {
+    // Get Z co-ordinate separation from stagnation point
+    Real zc  = pmb->pcoord->x3v(k) - wcr.pos[2];
+    Real zc2 = SQR(zc);
+    for (int j = pmb->js; j <= pmb->je; j++) {
+      // Get Y co-ordinate separation from stagnation point
+      Real yc  = pmb->pcoord->x2v(j) - wcr.pos[1];
+      Real yc2 = SQR(yc);
+      for (int i = pmb->is; i <= pmb->ie; i++) {
+        // Get X co-ordinate separation from stagnation point
+        Real xc  = pmb->pcoord->x1v(i) - wcr.pos[0];
+        Real xc2 = SQR(xc);
+        // Get radial distnace from WCR to current cell
+        Real r2 = xc2 + yc2 + zc2;
+        Real r  = sqrt(r2);
+        // Get approximate number of cells between current cell and WCR
+        int ri = int(r/dx);
+        // If number of cells distance is below threshold, refine until maximum level reached
+        if (ri < amr.wcr_separation) {
+          return 1;
+        }
       }
     }
   }
-  
-  if (derefineWind) return -1; // derefine
-  return 0; // keep as is 
+  // If the function has reached this point, meshblock can be flagged for de-refinement
+  return -1;
 }
 
 // All functions not related to Mesh:: or MeshBlock:: class below this line
 // =======================================================================================
 
 // Calculate the position and velocities of the stars based on the model time.
+//TODO this code needs some cleaning up 
 void orbitCalc(Real t) {
   // Calculate orbital offset due to time
   Real time_offset = phaseoff * period;  // Adjusted orbital offset
