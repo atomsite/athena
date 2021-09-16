@@ -16,6 +16,14 @@ bin/
 *.o
 *.obj
 
+# Other folders
+density/
+pressure/
+z/
+a/
+temp/
+
+
 # Compiled dynamic libraries
 *.so
 *.dylib
@@ -44,6 +52,9 @@ meshtest.dat
 # Visualization package files
 .smhist
 
+# Other things
+*.mp4
+
 # Mac OS metadata
 .DS_Store
 
@@ -65,4 +76,4 @@ meshtest.dat
 *.desc
 
 # compiled doxygen file
-doc/doxy*
+doc/Doxy*

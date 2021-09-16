@@ -39,11 +39,11 @@ file_type  = rst          # restart file
 dt         = 2.478816e+06 # time increment between outputs
 
 <time>
-cfl_number = 0.12         # The Courant, Friedrichs, & Lewy (CFL) Number
+cfl_number = 0.20         # The Courant, Friedrichs, & Lewy (CFL) Number
 nlim       = -1           # cycle limit
 tlim       = 2.478816e+08 # time limit 2e9
-integrator  = vl2         # time integration algorithm
-xorder      = 1           # order of spatial reconstruction
+integrator  = rk3         # time integration algorithm
+xorder      = 2           # order of spatial reconstruction
 ncycle_out  = 10          # interval for stdout summary info
 
 <mesh>
@@ -67,8 +67,9 @@ ix3_bc     = outflow    # inner-X3 boundary flag
 ox3_bc     = outflow    # outer-X3 boundary flag
 # Mesh refinment settings
 refinement = adaptive   # this must be in <mesh> section!
-numlevel   = 10         # this is actually limited by RefinementCondition() - set to high val
+numlevel   = 8         # this is actually limited by RefinementCondition() - set to high val
 derefine_count = 9999999999
+num_threads = 8
 
 <meshblock>
 #Testing has shown that 10^3 is the fastest size
@@ -88,8 +89,10 @@ cooling      = true  # cooling enabled "true" or "false"
 dust         = true  # dust enabled "on" or "off"
 dust_cooling = true  # dust cooling enabled "true" or "false"
 # Cooling curve
-ccurve1 = coolcurve.dat
-ccurve2 = coolcurve.dat
+coolcurve1 = cooling_curve_WC
+coolcurve2 = cooling_curve_solar
+ioncurve1  = electron_WC
+ioncurve2  = electron_solar
 # Star properties
 mdot1  = 5.7e-5 # Mass-loss rate of star 1 (Msol/yr)
 mdot2  = 1.6e-6 # Mass-loss rate of star 2 (Msol/yr)
