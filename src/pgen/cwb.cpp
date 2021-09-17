@@ -39,6 +39,7 @@
 #define CLOC 0  // Index for wind "colour"
 #define ZLOC 1  // Index for dust-to-gas mass ratio, z
 #define ALOC 2  // Index for dust grain radius, a
+#define LLOC 3  // Index for level scalar
 // Indices for stars
 #define WR 0 // Index for Wolf-Rayet, always primary star
 #define OB 1 // Index for OB star, always secondary
@@ -47,6 +48,7 @@
 #define YEARTOSEC  3.1556926e+07
 #define MSOLYRTOGS 6.3010252e+25
 #define MICRONTOCM 1.0000000e-04
+#define CMTOMICRON 1.0000000e+04
 // Physical Constants
 // Pi is already defined in defs.hpp!
 #define KBOLTZ 1.3806490e-16 // Boltmann constant in CGS (erg/K)
@@ -55,7 +57,7 @@
 #define MASSE  9.1093836e-28 // Electron mass (g)
 #define G      6.6743000e-8  // Gravitational constant in CGS (dyn cm^2/g^2)
 // Functions
-#define CUBE(x) ( (x)*(x)*(x) )     // Preprocessor cube function, faster than pow(x,3.0)
+#define CUBE(x) ( (x)*(x)*(x) )  // Preprocessor cube function, faster than pow(x,3.0)
 // End of preprocessor definitions
 
 // Classes
@@ -106,21 +108,27 @@ class Star {
 class DustDefaults {
   public:
     bool  enabled = false;
+    // Constants
     const Real z_min  = 1e-8; // Minimum dust-to-gas mass ratio
     const Real a_min  = 1e-6; // Minimum grain radius (micron)
     const Real rho_Gr = 3.0;  // Grain bulk density (g/cm^3)
-          Real z_init = z_min; // Initial d2g mass ratio, defined in problem file
-          Real a_init = a_min; // Initial grain radius, defined in problem file
+    const Real A      = 12.0; // Carbon atom mass, AMU
+    const Real eps_a  = 0.1;  // Grain sticking probability
+    // Variables
+    Real z_init = z_min; // Initial d2g mass ratio, defined in problem file
+    Real a_init = a_min; // Initial grain radius, defined in problem file
 };
 
 class WindCollisionRegion {
   public:
-    Real d_sep; // Separation distance (cm)
-    Real frac_rwr; 
-    Real frac_rob;
-    Real r_wr;  // Distance from stagnation point to WR star (cm)
-    Real r_ob;  // Distance from stagnation point to OB star (cm)
-    Real eta;   // Wind momentum ratio
+    // Variables
+    Real d_sep;     // Separation distance (cm)
+    Real frac_rwr;  // Fraction from stagnation point to WR star
+    Real frac_rob;  // Fraction from stagnation point to OB star
+    Real r_wr;      // Distance from stagnation point to WR star (cm)
+    Real r_ob;      // Distance from stagnation point to OB star (cm)
+    Real eta;       // Wind momentum ratio
+    // Arrays
     Real pos[3]  = {0.0,0.0,0.0}; // Stagnation point cartesian position (cm)
     Real dist[3] = {0.0,0.0,0.0}; // Star separation components (cm)
     // Functions
@@ -721,7 +729,7 @@ void MeshBlock::UserWorkInLoop() {
     }
   }
 
-  // Second run through MeshBlock, limit wind colour
+  // Second run through MeshBlock, limit wind colour and set level scalar
   for (int k=ks; k<=ke; ++k) {
     for (int j=js; j<=je; ++j) {
       for (int i=is; i<=ie; ++i) {
@@ -734,7 +742,7 @@ void MeshBlock::UserWorkInLoop() {
           col = 0.0;
         }
         pscalars->s(CLOC,k,j,i) = col;
-        pscalars->s(3,k,j,i) = loc.level * rho;
+        pscalars->s(LLOC,k,j,i) = loc.level * rho;
       }
     }
   }
@@ -1215,6 +1223,102 @@ void adjustPressureDueToCooling(int is,int ie,int js,int je,int ks,int ke,Real g
       } // i loop
     }   // j loop
   }     // k loop
+  return;
+}
+
+//! \fn void EvolveDustMultiWind(MeshBlock *pmb, const Real dt, AthenaArray<Real> &cons)
+/*! \brief Grow and shrink dust grains in accordance with growth and destruction mechanisms
+ *
+ *  Evolve dust, applying growth and destruction mechanisms
+ */
+void EvolveDustMultiWind(MeshBlock *pmb, const Real dt, AthenaArray<Real> &cons) {
+  // Get gamma for simulation
+  const Real gmma  = pmb->peos->GetGamma();
+  const Real gmma1 = gmma - 1.0;
+  
+  // Loop through cells in MeshBlock
+  for (int k = pmb->ks; k <= pmb->ke; k++) {
+    for (int j = pmb->js; j <= pmb->je; j++) {
+      for (int i = pmb->is; i <= pmb->ie; i++) {
+        // Import conserved variables
+        Real rho   = cons(IDN,k,j,i);        // Dust density
+        Real e_tot = cons(IEN,k,j,i);        // Total energy (erg)
+        Real u1    = cons(IM1,k,j,i) / rho;  // Gas velocity X component (cm/s)
+        Real u2    = cons(IM2,k,j,i) / rho;  // Gas velocity Y component (cm/s)
+        Real u3    = cons(IM3,k,j,i) / rho;  // Gas velocity X component (cm/s)
+        // Import scalars
+        Real col = pmb->pscalars->s(CLOC,k,j,i) / rho;  // Wind colour 
+        Real z   = pmb->pscalars->s(ALOC,k,j,i) / rho;  // Dust mass fraction
+        Real a   = pmb->pscalars->s(ALOC,k,j,i) / rho;  // Grain radius (micron)
+             a  *= MICRONTOCM;                          // Convert grain radius to CM
+        // Calculate gas properties
+        Real v2    = SQR(u1) + SQR(u2) + SQR(u3);  // Velocity**2 (cm^2/s^2)
+        Real e_kin = 0.5 * rho * v2;               // Kinetic energy (erg)
+        Real pre   = (e_tot - e_kin) * gmma1;      // Gas pressure (Ba)
+        // Calculate wind abundances
+        Real cols[2] = {0.0,0.0};
+             cols[0] = col;
+             cols[1] = 1.0 - col;
+        Real C_mass_frac = 0.0;
+        for (int n = 0; n < NWIND; n++) {
+          Real carbon_abundance = star[n].mass_frac[2];
+          Real wind_C_mass_frac = cols[n] * carbon_abundance;
+          C_mass_frac += wind_C_mass_frac;
+        }
+        Real rho_C = rho * C_mass_frac; // Gas density of Carbon element in wind (g/cm^3)
+        // Calculate average particle mass for gas, averaged between winds (g)
+        Real avg_mass = (cols[WR] * star[WR].avg_mass) * (cols[OB] * star[OB].avg_mass);
+        // Calculate gas temperature
+        Real T = (avg_mass * pre) / (rho * KBOLTZ); // Gas temperature (K)
+        // Calculate number density of wind
+        Real n_T = rho / avg_mass;
+        // Calculate dust grain parameters
+        Real rho_D   = rho * z;                                 // Dust density (g/cm^3)
+        Real mass_Gr = (4.0/3.0) * PI * CUBE(a) * dust.rho_Gr;  // Dust grain mass (g)
+        Real n_D     = rho_D / mass_Gr;                         // Dust number density (1/cm^3)
+        // Initialise grain growth and destruction variables
+        Real drho_D_dt = 0.0;  // Change in dust density (g/cm^3/s)
+        Real da_dt     = 0.0;  // Change in grain radius (cm/s)
+        // Finished initialisation, compute grain growth and destruction
+        if (z > dust.z_min && a > dust.a_min) {
+          if (T > 1.0e6) {
+            Real tau_D = (3.156e17 * a) / n_T;  // Grain destruction time (s)
+            da_dt      = -a / tau_D;
+            drho_D_dt  = -1.33e-17 * dust.rho_Gr * SQR(a) * n_T * n_D; 
+          }
+          else if (T < 1.4e4) {
+            Real wa   = sqrt((3.0 * KBOLTZ * T) / (12.0 * MASSH));  // Velocity of carbon atoms
+            da_dt     = (0.25 * dust.eps_a * rho_C* wa) / dust.rho_Gr;
+            drho_D_dt = 4.0 * PI * SQR(a) * dust.rho_Gr * n_D * da_dt;
+          }
+          // If there is any change in growth, calculate changes to conserved variables and scalars
+          if (drho_D_dt != 0.0) {
+            // Calculate new dust density
+            Real min_rho_D = rho * dust.z_min;
+            Real drho_D    = drho_D_dt * dt;
+            Real rho_D_new = rho_D + drho_D;
+                 rho_D_new = std::max(min_rho_D,rho_D_new);
+            // Calculate new gas density
+            Real rho_new = rho + (rho_D - rho_D_new);
+            // Calculate new dust-to-gas mass ratio 
+            Real z_new = rho_D_new / rho_new;
+            // Calculate new grain radius in cell
+            Real da     = da_dt * dt;
+            Real a_new  = a + da;
+                 a_new *= CMTOMICRON;  // Convert back into microns
+                 a_new  = std::max(dust.a_min,a_new);
+            // Update scalars
+            pmb->pscalars->s(CLOC,k,j,i) = col * rho_new;
+            pmb->pscalars->r(ZLOC,k,j,i) = z_new;
+            pmb->pscalars->s(ZLOC,k,j,i) = z_new * rho_new;
+            pmb->pscalars->r(ALOC,k,j,i) = a_new;
+            pmb->pscalars->s(ALOC,k,j,i) = a_new * rho_new;
+          }
+        }
+      }
+    }
+  }
+  // Finished!
   return;
 }
 
