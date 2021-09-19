@@ -4,9 +4,8 @@
 // Licensed under the 3-clause BSD License, see LICENSE file for details
 //========================================================================================
 //! \file cwb.cpp
-//! \brief Problem generator for 3D Colliding Wind Binary problem with dust advection and
-//!        growth, simulation is 3D cartesian only, and simulates Keplerian orbits
-//!        
+//! \brief Problem generator for 3D Colliding Wind Binary problem with dust evolution
+//! \author Joseph Eatson, with significant help from Julian Pittard
 
 // C headers
 
@@ -14,7 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
-#include <cstring>    // strcmp()
+#include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -32,7 +31,10 @@
 #include "../parameter_input.hpp"
 #include "../scalars/scalars.hpp"
 
+//========================================================================================
 // Preprocessor definitions
+//========================================================================================
+
 // Simulation constants
 #define NWIND 2 // Number of winds in simulation
 // Indices for scalars, makes for more readable scalar
@@ -47,7 +49,6 @@
 #define MSOLTOGRAM 1.9884099e+33  // Solar mass to gram 
 #define MSOLYRTOGS 6.3010252e+25  // Solar mass per year to grams per second
 #define MICRONTOCM 1.0000000e-04  // Micron to cm
-#define CMTOMICRON 1.0000000e+04  // cm to micron (used as much as micron to cm, divide slower)
 // Physical Constants
 // Pi is already defined in defs.hpp!
 #define KBOLTZ 1.3806490e-16 // Boltmann constant in CGS (erg/K)
@@ -58,8 +59,11 @@
 #define CUBE(x) ( (x)*(x)*(x) )  // Preprocessor cube function, faster than pow(x,3.0)
 // End of preprocessor definitions
 
-// Classes
+//========================================================================================
+// CLASSES
+//========================================================================================
 
+//========================================================================================
 //! \class Star
 //! \brief A class used to contain star and associated wind parameters for a star
 //! Both physical properties of the star considered by the simulation (mass, position,
@@ -67,6 +71,7 @@
 //! abundances) are stored here. Some parameters are defined in the problem file in 
 //! natural units such as solarmass/year, these are converted to CGS in order to fit
 //! more easily into the physics, this must be done manually in ProblemGenerator()
+//========================================================================================
 class Star {
   public:
     Real mass; // Star mas (g) 
@@ -114,10 +119,13 @@ class Star {
     }
 };
 
+//========================================================================================
 //! \class DustDefaults
 //! \brief Class used to contain typical minimum and problem-specific initial values
 //! Typical minimum values are used to constrain the dust production to realistic values,
 //! (grains cannot be subatomic etc etc.)
+//! \author Joseph Eatson
+//========================================================================================
 class DustDefaults {
   public:
     bool  enabled = false;
@@ -132,11 +140,15 @@ class DustDefaults {
     Real a_init = a_min; // Initial grain radius, defined in problem file
 };
 
+//========================================================================================
 //! \class WindCollisionRegion
 //! \brief Class for the storage of values relevant to the WCR
 //! Class is used to store position of stagnation point, separation distances
 //! for stars, separation from stars to stagnation point etc.
 //! Positions are updated at the end of every orbitCalc() call
+//! \author Joseph Eatson
+//========================================================================================
+
 class WindCollisionRegion {
   public:
     // Variables
@@ -170,16 +182,20 @@ class WindCollisionRegion {
     }
 };
 
+//========================================================================================
 //! \class Cooling
 //! \brief Class to enable or disable cooling
 //! Currently does not do much, probably shouldn't be a class, but the other
 //! features have their own class and I didn't want it to feel left out
 //! Could contain CoolCurve as a subclass
+//! \author Joseph Eatson
+//========================================================================================
 class Cooling {
   public:
     bool enabled = false;
 };
 
+//========================================================================================
 //! \class CoolCurve
 //! \brief Class containing a logarithmically evenly spaced cooling curve
 //! Lookup table used to quickly calculate energy loss without time consuming
@@ -191,6 +207,8 @@ class Cooling {
 //! Lambda is normalised with respect to a hydrogen flow with a density of 1 g/cm^3
 //! to calculate energy loss use the formulae
 //! dE(T)/dt = (rho / massH)^2 * Lambda(T)
+//! \author Joseph Eatson
+//========================================================================================
 class CoolCurve {
   public:
     std::string curve_file_name;
@@ -246,16 +264,20 @@ class CoolCurve {
     }
 };
 
+//========================================================================================
 //! \class DustCooling
 //! \brief Class to enable or disable dust cooling
 //! Currently does not do much, probably shouldn't be a class, but the other
 //! features have their own class and I didn't want it to feel left out
 //! Could contain IonCurve as a subclass
+//! \author Joseph Eatson
+//========================================================================================
 class DustCooling {
   public:
     bool enabled = false;
 };
 
+//========================================================================================
 //! \class IonCurve
 //! \brief Class containing a logarithmically temperature spaced ionisation fraction curve
 //! Class is used to store a temperature dependent ionisation fraction curve
@@ -266,6 +288,8 @@ class DustCooling {
 //! value using the searchAndInterpolate() function.
 //! Contains a method to read in a data file with the form
 //!     log(T)  ne/ni
+//! \author Joseph Eatson
+//========================================================================================
 class IonCurve {
   public:
     std::string curve_file_name; // String for filename of ion frac
@@ -325,11 +349,14 @@ class IonCurve {
     }
 };
 
+//========================================================================================
 //! \class AMR
 //! \brief Class detailing parameters for adaptive mesh refinement
 //! This class isn't used for much right now, aside from enabling or disabling AMR
 //! However more advanced AMR models that are aware of separation could use this
 //! in the future.
+//! \author Joseph Eatson
+//========================================================================================
 class AMR {
   public:
     bool enabled                 = false;
@@ -415,6 +442,7 @@ AMR amr;
 //! MeshBlock:: class.
 //! After reading and initialisation of classes, this function then outputs the input
 //! parameters to the terminal, at the immediate end of this function processing begins
+//! \author Joseph Eatson
 //========================================================================================
 
 void Mesh::InitUserMeshData(ParameterInput *pin) {
@@ -622,6 +650,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 //!        then maps on initial density and pressure.
 //!        The regions are divided by testing to see which side of the stagnation point
 //!        the cell is on.
+//! \author Joseph Eatson
 //========================================================================================
 
 void MeshBlock::ProblemGenerator(ParameterInput *pin) {
@@ -705,6 +734,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 //         Because time has not yet been updated we need to add on dt.
 //         This is used to update the stellar positions, dsep, etc.
 //         Otherwise, most processing is handled in meshblocks! 
+//! \author Joseph Eatson
 //========================================================================================
 void Mesh::UserWorkInLoop() {
   orbitCalc(time+dt);
@@ -725,6 +755,7 @@ void Mesh::UserWorkInLoop() {
 //!  Since the block consists of evenly spaced cells, it should be easy to rule out
 //!  blocks that are clearly not within the remap zone, reducing the number of radius 
 //!  tests.
+//! \author Joseph Eatson
 //========================================================================================
 
 void MeshBlock::UserWorkInLoop() {
@@ -841,6 +872,7 @@ void MeshBlock::UserWorkInLoop() {
 //!    This is based on the number of cells distance, this means that refinement should
 //!    be continuous and smooth outwards from the 3 refinement points
 //!  See https://github.com/PrincetonUniversity/athena/wiki/Adaptive-Mesh-Refinement
+//! \author Joseph Eatson
 //========================================================================================
 
 int refinementCondition(MeshBlock *pmb) {
@@ -909,6 +941,8 @@ int refinementCondition(MeshBlock *pmb) {
 //! \brief Function enrolled into meshblock class that calls other functions
 //! Functions are called from this function, since only one function can be enrolled at 
 //! a time. The functions enabled are depdendent on the simulation feature set
+//! \author Joseph Eatson
+//========================================================================================
 void physicalSources(MeshBlock *pmb, const Real time, const Real dt,
                      const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_scalar,
                      const AthenaArray<Real> &bcc, AthenaArray<Real> &cons,
@@ -923,7 +957,8 @@ void physicalSources(MeshBlock *pmb, const Real time, const Real dt,
   return;
 }
 
-// All functions not related to Mesh:: or MeshBlock:: class below this line
+//========================================================================================
+// All functions not related to Mesh:: or MeshBlock:: class below
 // =======================================================================================
 
 //========================================================================================
@@ -939,6 +974,7 @@ void physicalSources(MeshBlock *pmb, const Real time, const Real dt,
 //! of magnitude faster than an integral method.
 //! Additional functions are used to smooth out cooling between unresolved meshblock 
 //! edges and to adjust pressure safetly.
+//! \author Joseph Eatson
 //========================================================================================
 void radiateApprox(MeshBlock *pmb, const Real dt,
                    AthenaArray<Real> &cons) {
@@ -1098,23 +1134,25 @@ void radiateApprox(MeshBlock *pmb, const Real dt,
   return;
 }
 
+//========================================================================================
 //! \fn Real CalcLambdaDust(Real nH, Real a, Real T)
-//  \brief Calculate energy loss per dust grain, multiply by nD to calculate
-//         cell cooling rate
-//  - Energy lost from the gas flow due to dust is mainly due to
-//    collisional heating of the dust particles from atoms and
-//    electrons
-//  - Efficiency losses can occur at high temperatures as particles
-//           are so energetic they pass through one another
-//  - This function approximates this effect
-//  - Resultant value for single grain, to find energy loss in erg/s/cm^3
-//    value must be multiplied by nD
-//         Derived from:
-//         Dwek, E., & Werner, M. W. (1981).
-//         The Infrared Emission From Supernova Condensates.
-//         The Astrophysical Journal, 248, 138.
-//         https://doi.org/10.1086/159138
-
+//! \brief Calculate energy loss per dust grain, multiply by nD to calculate
+//!        cell cooling rate
+//! - Energy lost from the gas flow due to dust is mainly due to
+//!   collisional heating of the dust particles from atoms and
+//!   electrons
+//! - Efficiency losses can occur at high temperatures as particles
+//!          are so energetic they pass through one another
+//! - This function approximates this effect
+//! - Resultant value for single grain, to find energy loss in erg/s/cm^3
+//!   value must be multiplied by nD
+//!        Derived from:
+//!        Dwek, E., & Werner, M. W. (1981).
+//!        The Infrared Emission From Supernova Condensates.
+//!        The Astrophysical Journal, 248, 138.
+//!        https://doi.org/10.1086/159138
+//! \author Joseph Eatson
+//========================================================================================
 Real calcGrainCoolRate(Real rho_G, Real a, Real T, Star star, IonCurve ion_curve) {
   // Shorten kBT, since used a lot
   const Real kBT = T * KBOLTZ;
@@ -1398,7 +1436,7 @@ void EvolveDustMultiWind(MeshBlock *pmb, const Real dt, AthenaArray<Real> &cons)
             // Calculate new grain radius in cell
             Real da     = da_dt * dt;
             Real a_new  = a + da;
-                 a_new *= CMTOMICRON;  // Convert back into microns
+                 a_new /= MICRONTOCM;  // Convert back into microns
                  a_new  = std::max(dust.a_min,a_new);
             // Update scalars
             pmb->pscalars->s(CLOC,k,j,i) = col * rho_new;
@@ -1521,6 +1559,8 @@ void orbitCalc(Real t) {
 //! are required. uses standard C++ algorithm library for binary search, interpolation
 //! written for speed, as this function is called millions of times per timestep if
 //! cooling is enabled.
+//! \author Joseph Eatson
+//========================================================================================
 Real searchAndInterpolate(std::vector<Real> x_array, std::vector<Real> y_array, Real x) {
   // Perform binary search
   auto upper = std::upper_bound(x_array.begin(),x_array.end(),x);
