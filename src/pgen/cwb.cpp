@@ -44,15 +44,13 @@
 #define WR 0 // Index for Wolf-Rayet, always primary star
 #define OB 1 // Index for OB star, always secondary
 // Conversions
-#define MSOLTOGRAM 1.9884099e+33
-#define YEARTOSEC  3.1556926e+07
-#define MSOLYRTOGS 6.3010252e+25
-#define MICRONTOCM 1.0000000e-04
-#define CMTOMICRON 1.0000000e+04
+#define MSOLTOGRAM 1.9884099e+33  // Solar mass to gram 
+#define MSOLYRTOGS 6.3010252e+25  // Solar mass per year to grams per second
+#define MICRONTOCM 1.0000000e-04  // Micron to cm
+#define CMTOMICRON 1.0000000e+04  // cm to micron (used as much as micron to cm, divide slower)
 // Physical Constants
 // Pi is already defined in defs.hpp!
 #define KBOLTZ 1.3806490e-16 // Boltmann constant in CGS (erg/K)
-#define RSOL   6.9599000e10  // Solar radius in CGS (cm)
 #define MASSH  1.6735575e-24 // Hydrogen mass (g)
 #define MASSE  9.1093836e-28 // Electron mass (g)
 #define G      6.6743000e-8  // Gravitational constant in CGS (dyn cm^2/g^2)
@@ -61,6 +59,14 @@
 // End of preprocessor definitions
 
 // Classes
+
+//! \class Star
+//! \brief A class used to contain star and associated wind parameters for a star
+//! Both physical properties of the star considered by the simulation (mass, position,
+//! velocity etc.) and wind properties (mass loss rate, wind terminal velocity, wind 
+//! abundances) are stored here. Some parameters are defined in the problem file in 
+//! natural units such as solarmass/year, these are converted to CGS in order to fit
+//! more easily into the physics, this must be done manually in ProblemGenerator()
 class Star {
   public:
     Real mass; // Star mas (g) 
@@ -71,7 +77,7 @@ class Star {
     Real pos[3] = {0.0,0.0,0.0};  // X Y and Z coordinates for star (Cartesian, cm/s)
     Real vel[3] = {0.0,0.0,0.0};  // X Y and Z velocity components of star motion
     Real col = 0.0; // Wind colour, 1 for primary star 0 for secondary
-    // Wind abundances, stored in an array with followind indexes
+    // Wind abundances, stored in an array with the following indexes:
     // 0: Hydrogen
     // 1: Helium
     // 2: Carbon
@@ -80,18 +86,20 @@ class Star {
     // Without modification, assumes a pure hydrogen flow
     // Assume that all values should come to around 1.0, all other elements are trace
     Real mass_frac[5] = {1.0,0.0,0.0,0.0,0.0}; // Mass fraction
-    Real norm_n_E[5]  = {0.0,0.0,0.0,0.0,0.0}; // Number density for a density of 1.0 g/cm^3
+    Real norm_n_E[5]  = {0.0,0.0,0.0,0.0,0.0}; // Normalised number density
     Real avg_mass     = MASSH;  // Average particle mass (g)
     Real mu           = 1.0;    // Mean molecular mass
     int  ncells_remap = 10;     // Number of cells width for remap radius
-    // Functions
-    // Calculate average mass, 
+    // Methods
+    // Calculate average particle mass (g) and mean molecular mass, mu (n*MASSH)
     void calcAvgMass(void) {
+      // Calculate masses of each element being considered
       const Real m_E[5] = {1.00*MASSH,  // Hydrogen mass
                            4.00*MASSH,  // Helium mass
                            12.0*MASSH,  // Carbon mass
                            14.0*MASSH,  // Nitrogen mass 
                            16.0*MASSH}; // Oxygen mass
+      // Begin processing, 
       Real avgm = 0.0;
       for (int n = 0; n < 5; n++) {
         avgm        += m_E[n] * mass_frac[n];
@@ -100,11 +108,16 @@ class Star {
       avg_mass = avgm;
       mu       = avgm/MASSH;
     }
+    // Short method to calculate wind momentum, needs to be converted to CGS first
     void calcWindMomentum(void) {
       mom = mdot * vinf;
     }
 };
 
+//! \class DustDefaults
+//! \brief Class used to contain typical minimum and problem-specific initial values
+//! Typical minimum values are used to constrain the dust production to realistic values,
+//! (grains cannot be subatomic etc etc.)
 class DustDefaults {
   public:
     bool  enabled = false;
@@ -119,6 +132,11 @@ class DustDefaults {
     Real a_init = a_min; // Initial grain radius, defined in problem file
 };
 
+//! \class WindCollisionRegion
+//! \brief Class for the storage of values relevant to the WCR
+//! Class is used to store position of stagnation point, separation distances
+//! for stars, separation from stars to stagnation point etc.
+//! Positions are updated at the end of every orbitCalc() call
 class WindCollisionRegion {
   public:
     // Variables
@@ -152,11 +170,27 @@ class WindCollisionRegion {
     }
 };
 
+//! \class Cooling
+//! \brief Class to enable or disable cooling
+//! Currently does not do much, probably shouldn't be a class, but the other
+//! features have their own class and I didn't want it to feel left out
+//! Could contain CoolCurve as a subclass
 class Cooling {
   public:
     bool enabled = false;
 };
 
+//! \class CoolCurve
+//! \brief Class containing a logarithmically evenly spaced cooling curve
+//! Lookup table used to quickly calculate energy loss without time consuming
+//! emissivities calculation, to improve accuracy a linear interpolation is used,
+//! paramaeters for linear interpolation are found using a binary search
+//! using the searchAndInterpolate() function.
+//! Contains its own method to read in a plasma cooling curve file in the form
+//!   log(T)   Lambda
+//! Lambda is normalised with respect to a hydrogen flow with a density of 1 g/cm^3
+//! to calculate energy loss use the formulae
+//! dE(T)/dt = (rho / massH)^2 * Lambda(T)
 class CoolCurve {
   public:
     std::string curve_file_name;
@@ -212,11 +246,26 @@ class CoolCurve {
     }
 };
 
+//! \class DustCooling
+//! \brief Class to enable or disable dust cooling
+//! Currently does not do much, probably shouldn't be a class, but the other
+//! features have their own class and I didn't want it to feel left out
+//! Could contain IonCurve as a subclass
 class DustCooling {
   public:
     bool enabled = false;
 };
 
+//! \class IonCurve
+//! \brief Class containing a logarithmically temperature spaced ionisation fraction curve
+//! Class is used to store a temperature dependent ionisation fraction curve
+//! Ionisation fraction refined as ratio of free electrons to ions and is used to
+//! accurately calculate the number of free electrons in order to calculate the dust grain
+//! heating due to impinging electrons
+//! Binary search then linear interpolation is used to determine a reasonably accurate
+//! value using the searchAndInterpolate() function.
+//! Contains a method to read in a data file with the form
+//!     log(T)  ne/ni
 class IonCurve {
   public:
     std::string curve_file_name; // String for filename of ion frac
@@ -276,6 +325,11 @@ class IonCurve {
     }
 };
 
+//! \class AMR
+//! \brief Class detailing parameters for adaptive mesh refinement
+//! This class isn't used for much right now, aside from enabling or disabling AMR
+//! However more advanced AMR models that are aware of separation could use this
+//! in the future.
 class AMR {
   public:
     bool enabled                 = false;
@@ -290,7 +344,12 @@ class AMR {
     int max_level_to_refine;
 };
 
-// Functions
+// =======================================================================================
+// Function declarations
+// =======================================================================================
+
+// Meshblock defined functions do not need declaration, but problem generator functions do
+
 int refinementCondition(MeshBlock *pmb);
 void physicalSources(MeshBlock *pmb, const Real time, const Real dt,
                      const AthenaArray<Real> &prim,
@@ -315,15 +374,23 @@ void adjustPressureDueToCooling(int is,int ie,
                                 AthenaArray<Real> &dei,
                                 AthenaArray<Real> &avgm,
                                 AthenaArray<Real> &cons);
+void EvolveDustMultiWind(MeshBlock *pmb, const Real dt, AthenaArray<Real> &cons);
 void orbitCalc(Real t);
 Real searchAndInterpolate(std::vector<Real> x_array, std::vector<Real> y_array, Real x);
 
+// =======================================================================================
 // Global variables
+// =======================================================================================
+
+// Code is designed to use a number of global objects, and as few global variables as
+// possible
+// Much of objects are held in global, however MPI schema requires memory pools for these
+
 // Stars
 Star star[NWIND];  // Two stars, WR for index 0 and OB for index 1
-Real period;   // Orbital period (s)
-Real ecc;      // Orbit eccentricity
-Real phaseoff; // Phase offset
+Real period;       // Orbital period (s)
+Real ecc;          // Orbit eccentricity
+Real phaseoff;     // Phase offset
 // Make wind collision region object
 WindCollisionRegion wcr;
 // Dust properties
@@ -335,15 +402,19 @@ DustCooling dust_cooling;
 IonCurve ion_curve[NWIND];
 // Refinement
 AMR amr;
-// Thermodynamics
-const Real tmin = 1e4;
-Real gmma;  // Gamma
-Real gmma1; // Gamma - 1, comes up a lot
 
-
-//========================================================================================
+// =======================================================================================
 //! \fn void MeshBlock::ProblemGenerator(ParameterInput *pin)
 //! \brief Initialise problem, read in problem file and enroll functions
+//! At the start of a run or while re-initialising from a restart file, each thread reads
+//! in parameters from input file to classes and global variables, A loob would be more
+//! Preferable, but this is fairly readible.
+//! Variables are also converted from more convenient units to CGS values, where
+//! applicable, and additional calculations are performed, such as the first orbit
+//! calculation. The refinemenet and source term functions are also enrolled into the
+//! MeshBlock:: class.
+//! After reading and initialisation of classes, this function then outputs the input
+//! parameters to the terminal, at the immediate end of this function processing begins
 //========================================================================================
 
 void Mesh::InitUserMeshData(ParameterInput *pin) {
@@ -548,14 +619,15 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 //!        Winds are initialised by finding the stagnation point along
 //!        the x axis and dividing the simulation into two regions
 //!        initially dominated by each wind, a smooth wind function
-//         then maps on initial density and pressure.
+//!        then maps on initial density and pressure.
+//!        The regions are divided by testing to see which side of the stagnation point
+//!        the cell is on.
 //========================================================================================
 
 void MeshBlock::ProblemGenerator(ParameterInput *pin) {
-
+  // Get heat capacity ratio
   Real gmma  = peos->GetGamma();
   Real gmma1 = gmma - 1.0;
-
   // Loop over all cells with both winds, wind in begening of
   for (int n = 0; n < NWIND; n++) {
     for (int k = ks; k <= ke; k++) {
@@ -631,25 +703,28 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 //! \fn void Mesh::UserWorkInLoop()
 //  \brief Function called once after every time step for user-defined work.
 //         Because time has not yet been updated we need to add on dt.
-//         This is used to update the stellar positions, dsep, etc. 
+//         This is used to update the stellar positions, dsep, etc.
+//         Otherwise, most processing is handled in meshblocks! 
 //========================================================================================
 void Mesh::UserWorkInLoop() {
   orbitCalc(time+dt);
-
-  // Optional check to see if orbits are moving correctly
-  // if (Globals::my_rank == 0) {
-  //   printf("t = %.6e\n",time+dt);
-  //   for (int n = 0 ; n < 3 ; n++) {
-  //     printf("D%d = %.6e %.6e\n",n,star[WR].pos[n],star[OB].pos[n]);
-  //   }
-  // }
-
   return;
 }
 
 //========================================================================================
 //! \fn void Mesh::UserWorkInLoop(ParameterInput *pin)
-//! \brief Check radius of sphere to make sure it is round
+//! \brief Map on winds and constrain passive scalars that require constraining
+//! Function is used to simulate outflows for stars, this is performed by fixing the
+//! density, energy and momentum values around the cartesian coordinates of the star
+//! Dust is injected into the simulation here, using initial small grains with a very
+//! limited amount.
+//! This requires that stars are adequately resolved, otherwise winds may come out wrong
+//! ideally a minimum of 6 cells at the finest resolution from the orbital position of 
+//! the sta.
+//! Potential optimisations:
+//!  Since the block consists of evenly spaced cells, it should be easy to rule out
+//!  blocks that are clearly not within the remap zone, reducing the number of radius 
+//!  tests.
 //========================================================================================
 
 void MeshBlock::UserWorkInLoop() {
@@ -658,7 +733,6 @@ void MeshBlock::UserWorkInLoop() {
   Real gmma1 = gmma - 1.0;
   // Get timestep, all meshblocks operate synchronously
   Real dt = pmy_mesh->dt;
-  
   // Begin remapping winds
   for (int n = 0; n < NWIND; n++) {
     Real dx = pcoord->dx1v(0); // Cell width for this meshblock
@@ -767,7 +841,7 @@ void MeshBlock::UserWorkInLoop() {
 //!    This is based on the number of cells distance, this means that refinement should
 //!    be continuous and smooth outwards from the 3 refinement points
 //!  See https://github.com/PrincetonUniversity/athena/wiki/Adaptive-Mesh-Refinement
-// ========================================================================================
+//========================================================================================
 
 int refinementCondition(MeshBlock *pmb) {
   // First, get current cell level width, this assumes that all cells are square (they should be for this problem!)
@@ -799,6 +873,7 @@ int refinementCondition(MeshBlock *pmb) {
       }
     }
   }
+
   // Check to see if meshblock contains the stagnation point
   for (int k = pmb->ks; k <= pmb->ke; k++) {
     // Get Z co-ordinate separation from stagnation point
@@ -824,10 +899,16 @@ int refinementCondition(MeshBlock *pmb) {
       }
     }
   }
+
   // If the function has reached this point, meshblock can be flagged for de-refinement
   return -1;
 }
 
+//========================================================================================
+//! \fn physicalSources
+//! \brief Function enrolled into meshblock class that calls other functions
+//! Functions are called from this function, since only one function can be enrolled at 
+//! a time. The functions enabled are depdendent on the simulation feature set
 void physicalSources(MeshBlock *pmb, const Real time, const Real dt,
                      const AthenaArray<Real> &prim, const AthenaArray<Real> &prim_scalar,
                      const AthenaArray<Real> &bcc, AthenaArray<Real> &cons,
@@ -837,7 +918,7 @@ void physicalSources(MeshBlock *pmb, const Real time, const Real dt,
     radiateApprox(pmb,dt,cons);
   }
   if (dust.enabled) {
-    
+    EvolveDustMultiWind(pmb,dt,cons);
   }
   return;
 }
@@ -845,7 +926,20 @@ void physicalSources(MeshBlock *pmb, const Real time, const Real dt,
 // All functions not related to Mesh:: or MeshBlock:: class below this line
 // =======================================================================================
 
-
+//========================================================================================
+//! \fn radiateApprox
+//! \brief Calculate cooling of gas by approximating plasma and dust cooling
+//! Simulation requires fast and reasonably accurate calculation of energy energy loss due
+//! to physical proccesses such as dust heating, H recombination etc.
+//! This function approximates energy loss due to plasma processes by using a lookup table
+//! interpolation, and scaling the energy loss relative to the particle number density in
+//! the cell. 
+//! Dust cooling is approximated using the formulae described in Dwek & Werner 1981, an 
+//! approximation of electron opacity is utilised which is at worst 10% off, but 5 orders
+//! of magnitude faster than an integral method.
+//! Additional functions are used to smooth out cooling between unresolved meshblock 
+//! edges and to adjust pressure safetly.
+//========================================================================================
 void radiateApprox(MeshBlock *pmb, const Real dt,
                    AthenaArray<Real> &cons) {
   // Get constants
@@ -1007,14 +1101,14 @@ void radiateApprox(MeshBlock *pmb, const Real dt,
 //! \fn Real CalcLambdaDust(Real nH, Real a, Real T)
 //  \brief Calculate energy loss per dust grain, multiply by nD to calculate
 //         cell cooling rate
-//         - Energy lost from the gas flow due to dust is mainly due to
-//           collisional heating of the dust particles from atoms and
-//           electrons
-//         - Efficiency losses can occur at high temperatures as particles
+//  - Energy lost from the gas flow due to dust is mainly due to
+//    collisional heating of the dust particles from atoms and
+//    electrons
+//  - Efficiency losses can occur at high temperatures as particles
 //           are so energetic they pass through one another
-//         - This function approximates this effect
-//         - Resultant value for single grain, to find energy loss in erg/s/cm^3
-//           value must be multiplied by nD
+//  - This function approximates this effect
+//  - Resultant value for single grain, to find energy loss in erg/s/cm^3
+//    value must be multiplied by nD
 //         Derived from:
 //         Dwek, E., & Werner, M. W. (1981).
 //         The Infrared Emission From Supernova Condensates.
@@ -1093,16 +1187,15 @@ Real calcGrainCoolRate(Real rho_G, Real a, Real T, Star star, IonCurve ion_curve
   return edotGrain;
 }
 
-/*!  \brief Restrict the cooling rate at unresolved interfaces between hot 
- *          diffuse gas and cold dense gas.
- *
- *   Replace deltaE with minimum of neighboring deltaEs at the interface.
- *   Updates dei, which is positive if the gas is cooling.
- *
- *   \author Julian Pittard (Original version 13.09.11)
- *   \version 1.0-stable (Evenstar):
- *   \date Last modified: 13.09.11 (JMP)
- */
+//!  \brief Restrict the cooling rate at unresolved interfaces between hot 
+//!         diffuse gas and cold dense gas.
+//!
+//!  Replace deltaE with minimum of neighboring deltaEs at the interface.
+//!  Updates dei, which is positive if the gas is cooling.
+//!
+//!  \author Julian Pittard (Original version 13.09.11)
+//!  \version 1.0-stable (Evenstar):
+//!  \date Last modified: 13.09.11 (JMP)
 void restrictCool(int is,int ie,
                   int js,int je,
                   int ks,int ke,
@@ -1321,9 +1414,13 @@ void EvolveDustMultiWind(MeshBlock *pmb, const Real dt, AthenaArray<Real> &cons)
   // Finished!
   return;
 }
-
-// Calculate the position and velocities of the stars based on the model time.
-//TODO this code needs some cleaning up 
+//========================================================================================
+//! \fn orbitCalc
+//! \brief Calculate the position and velocities of the stars based on the model time.
+//! Updates orbits, stagnation point position estimation and distances
+//! Note: This code is in need of serious optimisation and rewriting, it works, but 
+//!       it could be better.
+//========================================================================================
 void orbitCalc(Real t) {
   // Calculate orbital offset due to time
   Real time_offset = phaseoff * period;  // Adjusted orbital offset
@@ -1417,6 +1514,13 @@ void orbitCalc(Real t) {
   return;
 }
 
+//========================================================================================
+//! \fn searchAndInterpolate
+//! \brief Search through two arrays, X and Y, to find interpolated value for Y given X
+//! Used for lookup tables in the context of this problem, two vectors of equal length
+//! are required. uses standard C++ algorithm library for binary search, interpolation
+//! written for speed, as this function is called millions of times per timestep if
+//! cooling is enabled.
 Real searchAndInterpolate(std::vector<Real> x_array, std::vector<Real> y_array, Real x) {
   // Perform binary search
   auto upper = std::upper_bound(x_array.begin(),x_array.end(),x);
@@ -1428,7 +1532,6 @@ Real searchAndInterpolate(std::vector<Real> x_array, std::vector<Real> y_array, 
   Real xu = x_array[iu];
   Real yl = y_array[il];
   Real yu = y_array[iu];
-  std::cout << xl << " " << xu << " " << yl << " " << yu << "\n";
   // Perform linear interpolation
   Real y = yl + ((x - xl) * ((yu - yl) / (xu - xl)));
   return y;
