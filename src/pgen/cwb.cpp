@@ -99,19 +99,23 @@ class Star {
     // Calculate average particle mass (g) and mean molecular mass, mu (n*MASSH)
     void calcAvgMass(void) {
       // Calculate masses of each element being considered
-      const Real m_E[5] = {1.00*MASSH,  // Hydrogen mass
-                           4.00*MASSH,  // Helium mass
-                           12.0*MASSH,  // Carbon mass
-                           14.0*MASSH,  // Nitrogen mass 
-                           16.0*MASSH}; // Oxygen mass
+      const Real m_E[5] = {1.00,  // Hydrogen mass
+                           4.00,  // Helium mass
+                           12.0,  // Carbon mass
+                           14.0,  // Nitrogen mass 
+                           16.0}; // Oxygen mass
       // Begin processing, 
-      Real avgm = 0.0;
       for (int n = 0; n < 5; n++) {
-        avgm        += m_E[n] * mass_frac[n];
         norm_n_E[n]  = mass_frac[n] / m_E[n];
       }
-      avg_mass = avgm;
-      mu       = avgm/MASSH;
+      // Use Mihalas 1978 estimate for fully ionised 1/mu
+      Real X = mass_frac[0];
+      Real Y = mass_frac[1];
+      Real Z = 1.0 - (X+Y);
+      Real inv_mu = (2*X) + (0.75*Y) + (0.5*Z);
+      // Calculate mu and mu*mH
+      mu = 1.0 / inv_mu;
+      avg_mass = mu * MASSH;
     }
     // Short method to calculate wind momentum, needs to be converted to CGS first
     void calcWindMomentum(void) {
@@ -1087,7 +1091,7 @@ void radiateApprox(MeshBlock *pmb, const Real dt,
             dt_int += dt_cool;
             // Calculate new temperature, update pressure
             Real dE = -dE_dt_tot * dt_cool;
-            Real T_new = T * (E_int_new * dE) / E_int_new;
+            Real T_new = T * (E_int_new + dE) / E_int_new;
             // Check to see if cooling needs to exit
             if (T_new < cool_curve[WR].T_min) {
               T = cool_curve[WR].T_min;
